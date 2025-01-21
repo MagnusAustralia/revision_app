@@ -1,4 +1,4 @@
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 // use actix_web::http::header::LOCATION;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
@@ -21,8 +21,10 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone())) // Share the pool with all handlers
             .wrap(Cors::permissive()) // Allow all origins, similar to `CorsLayer::very_permissive()`
-            .service(list)
-            .service(create)
+            .service(list_subjects)
+            .service(list_books)
+            .service(list_sections)
+            .service(list_topics)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
@@ -30,89 +32,141 @@ async fn main() -> std::io::Result<()> {
 }
 
 #[derive(Deserialize)]
-struct NewTodo {
-    description: String,
+struct QueryStruct {
+    subject_id: Option<i64>,
+    book_id: Option<i64>,
+    section_id: Option<i64>
 }
 
 #[derive(Serialize, Deserialize)]
-struct Todo {
+struct Subject {
     id: i64,
-    description: String,
-    done: bool,
+    name: String,
 }
 
+#[derive(Serialize, Deserialize)]
+struct Topic {
+    id: i64,
+    name: String,
+    markdown: String
+}
+
+#[derive(Deserialize)]
+struct UpdateTopic {
+    markdown: String,
+    topic_id: i64,
+}
+
+
 #[get("/")]
-async fn list(pool: web::Data<SqlitePool>) -> impl Responder {
-    // List all todos
-    match sqlx::query_as!(Todo, "SELECT id, description, done FROM todos ORDER BY id")
+async fn list_subjects(pool: web::Data<SqlitePool>) -> impl Responder {
+    // List all Subjects
+    match sqlx::query_as!(Subject, "SELECT id, name FROM subjects ORDER BY id")
         .fetch_all(pool.get_ref())
         .await
     {
-        Ok(todos) => HttpResponse::Ok().json(todos), // Return todos as JSON
+        Ok(subjects) => HttpResponse::Ok().json(subjects), // Return subjects as JSON
         Err(e) => {
-            eprintln!("Error fetching todos: {}", e);
-            HttpResponse::InternalServerError().body("Error fetching todos")
+            eprintln!("Error fetching subjects: {}", e);
+            HttpResponse::InternalServerError().body("Error fetching subjects")
         }
     }
 }
 
-#[get("/create")]
-// async fn create(pool: web::Data<SqlitePool>, form: web::Form<NewTodo>) -> impl Responder {
-//     // List all todos
-//     match sqlx::query!(
-//         "INSERT INTO todos (description) VALUES (?)",
-//         form.description,
-//     )
-//         .execute(pool.get_ref())
-//         .await
-//     {
-//         Ok(_) => HttpResponse::Found()
-//             .append_header((LOCATION, "http://localhost:5173")) // Use append_header for the Location header
-//             .finish(),
-//         Err(e) => {
-//             eprintln!("Error creating todo: {}", e);
-//             HttpResponse::InternalServerError().body("Error creating todo")
-//         }
-//     }
-// }
-async fn create(
-    pool: web::Data<SqlitePool>, // Shared database pool
-    query: web::Query<NewTodo>, // Extract query parameters from the URL
+#[get("/books")]
+async fn list_books(
+    pool: web::Data<SqlitePool>,
+    query: web::Query<QueryStruct>,  // Extract query params from the URL
 ) -> impl Responder {
-    // Insert the new todo into the database
-    match sqlx::query!(
-        "INSERT INTO todos (description, done) VALUES (?, ?)",
-        query.description,
-        false, // Default `done` to `false`
-    )
-    .execute(pool.get_ref())
-    .await
+    let subject_id = &query.subject_id;
+    // List all Books
+    match sqlx::query_as!(Subject, "SELECT id, name FROM books WHERE subject_id=?", subject_id)
+        .fetch_all(pool.get_ref())
+        .await
     {
-        Ok(_) => HttpResponse::Ok().body("Successfully inserted todo!"),
+        Ok(books) => HttpResponse::Ok().json(books), // Return books as JSON
         Err(e) => {
-            eprintln!("Error inserting todo: {}", e);
-            HttpResponse::InternalServerError().body("Error inserting todo")
+            eprintln!("Error fetching books: {}", e);
+            HttpResponse::InternalServerError().body("Error fetching books")
         }
     }
 }
 
-
-#[get("/delete/{id}")]
-async fn delete(
-    pool: web::Data<SqlitePool>, // Shared database pool
-    path: web::Path<i64>,        // Extract `id` from the URL path
+#[get("/sections")]
+async fn list_sections(
+    pool: web::Data<SqlitePool>,
+    query: web::Query<QueryStruct>,  // Extract query params from the URL
 ) -> impl Responder {
-    let id = path.into_inner(); // Get the `id` from the URL
+    let book_id = &query.book_id;
+    // List all Sections
+    match sqlx::query_as!(Subject, "SELECT id, name FROM sections WHERE book_id=?", book_id)
+        .fetch_all(pool.get_ref())
+        .await
+    {
+        Ok(sections) => HttpResponse::Ok().json(sections), // Return sections as JSON
+        Err(e) => {
+            eprintln!("Error fetching sections: {}", e);
+            HttpResponse::InternalServerError().body("Error fetching sections")
+        }
+    }
+}
 
-    // Delete the todo with the given `id` from the database
-    match sqlx::query!("DELETE FROM todos WHERE id = ?", id)
+#[get("/topics")]
+async fn list_topics(
+    pool: web::Data<SqlitePool>,
+    query: web::Query<QueryStruct>,  // Extract query params from the URL
+) -> impl Responder {
+    let subject_id = &query.subject_id;
+    let book_id = &query.book_id;
+    let section_id = &query.section_id;
+    // List all Topics
+    if let Some(section_id) = section_id {
+        match sqlx::query_as!(Topic, "SELECT id, name, markdown FROM topics WHERE subject_id=? AND book_id=? AND section_id=?", subject_id, book_id, section_id)
+            .fetch_all(pool.get_ref())
+            .await
+        {
+            Ok(topics) => HttpResponse::Ok().json(topics), // Return topics as JSON
+            Err(e) => {
+                eprintln!("Error fetching sections: {}", e);
+                HttpResponse::InternalServerError().body("Error fetching sections")
+            }
+        }
+    } else {
+        match sqlx::query_as!(Topic, "SELECT id, name, markdown FROM topics WHERE subject_id=?", subject_id)
+        .fetch_all(pool.get_ref())
+        .await
+    {
+        Ok(topics) => HttpResponse::Ok().json(topics), // Return topics as JSON
+        Err(e) => {
+            eprintln!("Error fetching sections: {}", e);
+            HttpResponse::InternalServerError().body("Error fetching sections")
+        }
+    }
+    }
+}
+
+#[post("/update")]
+async fn update(
+    pool: web::Data<SqlitePool>,
+    body: web::Json<UpdateTopic>,  // Use JSON for the POST request body
+) -> impl Responder {
+    let UpdateTopic { markdown, topic_id } = body.into_inner();
+
+    // Update the topic in the database
+    match sqlx::query!("UPDATE topics SET markdown = ? WHERE id = ?", markdown, topic_id)
         .execute(pool.get_ref())
         .await
     {
-        Ok(_) => HttpResponse::Ok().body(format!("Successfully deleted todo with id {}", id)),
+        Ok(result) => {
+            if result.rows_affected() > 0 {
+                HttpResponse::Ok().body("Topic successfully updated!")
+            } else {
+                HttpResponse::NotFound().body("No topic found with the given ID")
+            }
+        }
         Err(e) => {
-            eprintln!("Error deleting todo: {}", e);
-            HttpResponse::InternalServerError().body("Error deleting todo")
+            eprintln!("Error updating topic: {}", e);
+            HttpResponse::InternalServerError().body("Error updating topic")
         }
     }
 }
